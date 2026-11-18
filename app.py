@@ -792,7 +792,7 @@ elif page == "Admin":
                         assigned_count = conn.execute("SELECT COUNT(*) FROM menu WHERE category=?", (category_to_remove,)).fetchone()[0]
                         if assigned_count:
                             conn.close()
-                            st.error(f"Cannot remove '{category_to_remove}' yet. {assigned_count} menu item(s) still use it. Edit those items and move them to another category first.")
+                            st.error(f"Cannot remove '{category_to_remove}' yet. {assigned_count} menu item(s) still use it. Move those items to another category first.")
                         else:
                             conn.execute("DELETE FROM menu_categories WHERE name=?", (category_to_remove,))
                             conn.commit()
@@ -801,6 +801,43 @@ elif page == "Admin":
                             st.rerun()
                 else:
                     st.caption("No categories have been created yet.")
+
+            current_categories = get_categories()
+            st.markdown("#### Edit category")
+            if current_categories:
+                with st.form("rename_menu_category_form"):
+                    category_to_edit = st.selectbox("Choose category", current_categories, key="edit_category_select")
+                    renamed_category = st.text_input("New category name", value=category_to_edit, key="renamed_category_name")
+                    rename_category_submit = st.form_submit_button("Save category changes")
+                if rename_category_submit:
+                    clean_new_name = renamed_category.strip()
+                    if not clean_new_name:
+                        st.error("Enter a category name.")
+                    elif clean_new_name.casefold() != category_to_edit.casefold() and any(
+                        existing.casefold() == clean_new_name.casefold() for existing in current_categories
+                    ):
+                        st.error("A category with that name already exists.")
+                    elif clean_new_name == category_to_edit:
+                        st.info("No category changes were made.")
+                    else:
+                        conn = db()
+                        rename_succeeded = False
+                        try:
+                            conn.execute("BEGIN IMMEDIATE")
+                            conn.execute("UPDATE menu_categories SET name=? WHERE name=?", (clean_new_name, category_to_edit))
+                            conn.execute("UPDATE menu SET category=? WHERE category=?", (clean_new_name, category_to_edit))
+                            conn.commit()
+                            rename_succeeded = True
+                        except sqlite3.IntegrityError:
+                            conn.rollback()
+                            st.error("A category with that name already exists.")
+                        finally:
+                            conn.close()
+                        if rename_succeeded:
+                            st.success(f"Category renamed to '{clean_new_name}'. Menu items in that category were updated too.")
+                            st.rerun()
+            else:
+                st.caption("Add a category before editing one.")
             st.divider()
             st.markdown("#### Menu inventory")
             for item in menu_all:
