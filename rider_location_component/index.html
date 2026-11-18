@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:Arial,sans-serif;margin:0;color:#2d281e}
+button{background:#3f613f;color:#fff;border:0;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:600;cursor:pointer}
+button:hover{background:#b58a36;color:#211b10}
+#status{margin-top:9px;font-size:14px;line-height:1.5}
+</style></head><body>
+<button id="start">Share my location</button><div id="status">Tap to start GPS sharing. Your phone will ask for permission.</div>
+<script>
+(function(){
+ const status=document.getElementById('status'),button=document.getElementById('start');
+ let mode='watch';
+ function send(value){window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:value,dataType:'json'},'*');}
+ window.addEventListener('message',function(e){const d=e.data||{};if(d.type==='streamlit:render'&&d.args&&d.args.mode)mode=d.args.mode;});
+ button.addEventListener('click',function(){
+  if(!navigator.geolocation){status.textContent='This browser does not support GPS.';return;}
+  button.disabled=true;status.textContent='Waiting for location permission…';
+  if(mode==='once'){
+   navigator.geolocation.getCurrentPosition(function(p){const v={lat:p.coords.latitude,lon:p.coords.longitude,updatedAt:new Date().toLocaleString()};send(v);status.textContent='Delivery location captured.';button.disabled=false;},function(e){status.textContent='Location error: '+e.message;button.disabled=false;},{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+  }else{
+   navigator.geolocation.watchPosition(function(p){const v={lat:p.coords.latitude,lon:p.coords.longitude,updatedAt:new Date().toLocaleString()};send(v);status.textContent='Sharing live location. Last update: '+v.updatedAt;button.textContent='Location sharing is on';},function(e){status.textContent='GPS error: '+e.message;button.disabled=false;},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  }
+ });
+ window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:componentReady',apiVersion:1},'*');
+ window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:105},'*');
+})();
+</script></body></html>
