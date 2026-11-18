@@ -31,6 +31,10 @@ def init_db():
         name TEXT NOT NULL, category TEXT NOT NULL, description TEXT DEFAULT '',
         price INTEGER NOT NULL, available INTEGER DEFAULT 1, image_url TEXT DEFAULT ''
     )""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS menu_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE
+    )""")
     cur.execute("""CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT, customer TEXT NOT NULL, phone TEXT NOT NULL,
         address TEXT DEFAULT '', items TEXT NOT NULL, total INTEGER NOT NULL,
@@ -95,8 +99,16 @@ def init_db():
             ("Yam Porridge","Yam","Rich yam porridge with palm oil and spices.",3500),
         ]
         cur.executemany("INSERT INTO menu(name,category,description,price) VALUES(?,?,?,?)", items)
+    # Keep category records persistent and migrate categories already used by menu items.
+    cur.execute("INSERT OR IGNORE INTO menu_categories(name) SELECT DISTINCT TRIM(category) FROM menu WHERE TRIM(category) <> ''")
     conn.commit()
     conn.close()
+
+def get_categories():
+    conn = db()
+    rows = conn.execute("SELECT name FROM menu_categories ORDER BY name COLLATE NOCASE").fetchall()
+    conn.close()
+    return [row["name"] for row in rows]
 
 init_db()
 
@@ -199,6 +211,28 @@ def set_theme_css(theme):
     :root {{ color-scheme: {'dark' if dark else 'light'}; }}
     html, body, [data-testid="stAppViewContainer"], [data-testid="stMarkdownContainer"],
     button, input, textarea, select, label, p, span, div {{ font-family:'Poppins',sans-serif !important; }}
+    /* Keep Streamlit's Material Symbols font for every built-in icon.
+       This must be global: expanders, password visibility controls, tabs,
+       navigation and admin widgets all render icons outside admin_auth. */
+    [data-testid="stIconMaterial"],
+    [data-testid="stIconMaterial"] *,
+    span[data-testid="stIconMaterial"],
+    .material-symbols-rounded,
+    .material-symbols-outlined,
+    .material-icons,
+    [class*="material-symbols"] {{
+        font-family:'Material Symbols Rounded' !important;
+        font-weight:normal !important;
+        font-style:normal !important;
+        letter-spacing:normal !important;
+        text-transform:none !important;
+        white-space:nowrap !important;
+        direction:ltr !important;
+        font-feature-settings:'liga' 1 !important;
+        font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24 !important;
+        -webkit-font-feature-settings:'liga' !important;
+        -webkit-font-smoothing:antialiased !important;
+    }}
     [data-testid="stAppViewContainer"], [data-testid="stMain"] {{ background:{bg} !important; color:{text} !important; }}
     [data-testid="stHeader"] {{ background:{bg} !important; }}
     [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display:none !important; width:0 !important; }}
@@ -212,6 +246,8 @@ def set_theme_css(theme):
     h1,h2,h3,h4 {{ color:{text} !important; font-weight:600 !important; letter-spacing:-.5px; }}
     h1 {{ font-size:clamp(1.8rem,3vw,2.65rem) !important; }}
     p {{ color:{muted}; line-height:1.65; }}
+    .brand-link {{ display:inline-block !important; color:inherit !important; text-decoration:none !important; cursor:pointer; }}
+    .brand-link:hover {{ opacity:.86; text-decoration:none !important; }}
     .brand {{ font-size:1.25rem; font-weight:800; letter-spacing:-1px; color:{text}; }}
     .brand span {{ color:#a96b3c; }}
     .brand-sub {{ color:{muted}; font-size:.59rem; letter-spacing:2px; margin-top:-2px; }}
@@ -247,7 +283,7 @@ def set_theme_css(theme):
     /* HEADER LAYOUT: separate desktop and phone structures avoid overlap. */
     .st-key-desktop_header {{
       display:block !important; width:100% !important; margin:0 0 10px !important;
-      padding:16px 0 10px !important; position:relative !important; z-index:5 !important;
+      padding:34px 0 10px !important; position:relative !important; z-index:5 !important;
     }}
     .st-key-desktop_header [data-testid="stHorizontalBlock"] {{
       display:flex !important; flex-wrap:nowrap !important; align-items:center !important;
@@ -286,13 +322,19 @@ def set_theme_css(theme):
         line-height:1.4 !important; white-space:nowrap !important;
       }}
       .st-key-mobile_controls {{ display:block !important; width:100% !important; margin:0 0 12px !important; }}
-      .st-key-mobile_controls [data-testid="stHorizontalBlock"] {{
-        display:flex !important; flex-wrap:nowrap !important; align-items:center !important;
-        justify-content:flex-start !important; gap:9px !important; width:100% !important;
+      /* Keep the hamburger first and the theme toggle immediately to its right. */
+      .st-key-mobile_controls [data-testid="stVerticalBlock"] {{
+        display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
+        align-items:center !important; justify-content:flex-start !important;
+        gap:4pt !important; width:100% !important;
       }}
-      .st-key-mobile_controls [data-testid="column"] {{
+      .st-key-mobile_controls [data-testid="stElementContainer"] {{
         flex:0 0 42px !important; width:42px !important; min-width:42px !important;
-        max-width:42px !important; padding:0 !important;
+        max-width:42px !important; margin:0 !important; padding:0 !important;
+      }}
+      .st-key-mobile_controls [data-testid="stElementContainer"] > div {{
+        width:42px !important; min-width:42px !important; max-width:42px !important;
+        margin:0 !important; padding:0 !important;
       }}
       .st-key-mobile_controls button {{
         display:flex !important; visibility:visible !important; opacity:1 !important;
@@ -346,13 +388,25 @@ DEFAULT_IMAGES = {
 }
 
 def item_image(item):
+    """Return a usable image source, falling back when a saved upload is missing.
+
+    Older database rows may contain relative upload paths whose files were not
+    included in a deployment or were deleted locally. Never pass those missing
+    paths to st.image; use the category fallback instead.
+    """
     url = (item.get("image_url") or "").strip()
     if url:
-        if url.startswith("/"):
-            local = APP_DIR / url.lstrip("/")
-            if local.exists(): return str(local)
-        return url
-    return DEFAULT_IMAGES.get(item.get("category"), DEFAULT_IMAGES["Rice"])
+        if url.startswith(("https://", "http://", "data:")):
+            return url
+        # Treat every non-URL value (including uploads/name.jpg and /uploads/name.jpg)
+        # as a path relative to the application directory.
+        local = Path(url.lstrip("/\\"))
+        if not local.is_absolute():
+            local = APP_DIR / local
+        if local.is_file():
+            return str(local)
+    category = item.get("category") or "Rice"
+    return DEFAULT_IMAGES.get(category, DEFAULT_IMAGES["Rice"])
 
 def save_uploaded_image(uploaded):
     if uploaded is None:
@@ -447,6 +501,9 @@ try:
     if st.query_params.get("admin") == "1" and not st.session_state.admin_route_enabled:
         st.session_state.admin_route_enabled = True
         st.session_state.page = "Admin"
+    elif st.query_params.get("home") == "1":
+        st.session_state.page = "Home"
+        st.query_params.pop("home", None)
 except Exception:
     pass
 
@@ -459,7 +516,7 @@ set_theme_css(st.session_state.theme)
 with st.container(key="desktop_header"):
     desktop_brand_col, desktop_theme_col = st.columns([1, 0.08], gap="small", vertical_alignment="center")
     with desktop_brand_col:
-        st.markdown('<div class="brand">NAIJA <span>TABLE</span></div><div class="brand-sub">NIGERIAN KITCHEN & GRILL</div>', unsafe_allow_html=True)
+        st.markdown('<a class="brand-link" href="?home=1" aria-label="Naija Table home"><div class="brand">NAIJA <span>TABLE</span></div><div class="brand-sub">NIGERIAN KITCHEN & GRILL</div></a>', unsafe_allow_html=True)
     with desktop_theme_col:
         with st.container(key="desktop_theme"):
             desktop_icon = "☾" if st.session_state.theme == "Light" else "☀"
@@ -469,20 +526,16 @@ with st.container(key="desktop_header"):
 
 with st.container(key="mobile_header"):
     with st.container(key="mobile_brand"):
-        st.markdown('<div class="brand">NAIJA <span>TABLE</span></div><div class="brand-sub">NIGERIAN KITCHEN & GRILL</div>', unsafe_allow_html=True)
+        st.markdown('<a class="brand-link" href="?home=1" aria-label="Naija Table home"><div class="brand">NAIJA <span>TABLE</span></div><div class="brand-sub">NIGERIAN KITCHEN & GRILL</div></a>', unsafe_allow_html=True)
     with st.container(key="mobile_controls"):
-        mobile_menu_col, mobile_theme_col = st.columns([1, 1], gap="small", vertical_alignment="center")
-        with mobile_menu_col:
-            with st.container(key="mobile_menu"):
-                menu_icon = "×" if st.session_state.mobile_menu_open else "☰"
-                if st.button(menu_icon, key="mobile_menu_toggle", help="Open navigation" if not st.session_state.mobile_menu_open else "Close navigation"):
-                    st.session_state.mobile_menu_open = not st.session_state.mobile_menu_open
-                    st.rerun()
-        with mobile_theme_col:
-            mobile_icon = "☾" if st.session_state.theme == "Light" else "☀"
-            if st.button(mobile_icon, key="mobile_theme_toggle", help="Switch light/dark mode"):
-                st.session_state.theme = "Dark" if st.session_state.theme == "Light" else "Light"
-                st.rerun()
+        menu_icon = "×" if st.session_state.mobile_menu_open else "☰"
+        if st.button(menu_icon, key="mobile_menu_toggle", help="Open navigation" if not st.session_state.mobile_menu_open else "Close navigation"):
+            st.session_state.mobile_menu_open = not st.session_state.mobile_menu_open
+            st.rerun()
+        mobile_icon = "☾" if st.session_state.theme == "Light" else "☀"
+        if st.button(mobile_icon, key="mobile_theme_toggle", help="Switch light/dark mode"):
+            st.session_state.theme = "Dark" if st.session_state.theme == "Light" else "Light"
+            st.rerun()
 
 # A simple conditional navigation panel replaces Streamlit's popover. This avoids
 # the default "Expand more / Expand less" accessibility text in the mobile UI.
@@ -711,6 +764,44 @@ elif page == "Admin":
             st.session_state.admin=False; st.rerun()
         tab_menu,tab_add,tab_orders,tab_settings=st.tabs(["Manage menu","Add menu item","Orders","Restaurant settings"])
         with tab_menu:
+            st.markdown("#### Manage categories")
+            category_col, add_category_col = st.columns([2, 1])
+            with category_col:
+                with st.form("add_menu_category_form", clear_on_submit=True):
+                    new_category_name = st.text_input("New category name", placeholder="e.g. Seafood")
+                    add_category_submit = st.form_submit_button("Add category")
+                if add_category_submit:
+                    clean_category = new_category_name.strip()
+                    if not clean_category:
+                        st.error("Enter a category name.")
+                    elif any(existing.casefold() == clean_category.casefold() for existing in get_categories()):
+                        st.error("That category already exists.")
+                    else:
+                        conn = db()
+                        conn.execute("INSERT INTO menu_categories(name) VALUES(?)", (clean_category,))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Category '{clean_category}' added.")
+                        st.rerun()
+            with add_category_col:
+                current_categories = get_categories()
+                if current_categories:
+                    category_to_remove = st.selectbox("Category to remove", current_categories, key="remove_category_select")
+                    if st.button("Remove category", key="remove_menu_category_button"):
+                        conn = db()
+                        assigned_count = conn.execute("SELECT COUNT(*) FROM menu WHERE category=?", (category_to_remove,)).fetchone()[0]
+                        if assigned_count:
+                            conn.close()
+                            st.error(f"Cannot remove '{category_to_remove}' yet. {assigned_count} menu item(s) still use it. Edit those items and move them to another category first.")
+                        else:
+                            conn.execute("DELETE FROM menu_categories WHERE name=?", (category_to_remove,))
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Category '{category_to_remove}' removed.")
+                            st.rerun()
+                else:
+                    st.caption("No categories have been created yet.")
+            st.divider()
             st.markdown("#### Menu inventory")
             for item in menu_all:
                 with st.container(border=True):
@@ -729,7 +820,10 @@ elif page == "Admin":
                     with st.expander("Edit item"):
                         with st.form(f"edit_{item['id']}"):
                             en=st.text_input("Name",item["name"])
-                            ec=st.selectbox("Category",["Soups","Rice","Snacks","Drinks","Sides","Meat","Yam"],index=["Soups","Rice","Snacks","Drinks","Sides","Meat","Yam"].index(item["category"]) if item["category"] in ["Soups","Rice","Snacks","Drinks","Sides","Meat","Yam"] else 0)
+                            edit_categories = get_categories()
+                            if item["category"] not in edit_categories:
+                                edit_categories = [item["category"]] + edit_categories
+                            ec=st.selectbox("Category",edit_categories,index=edit_categories.index(item["category"]))
                             ed=st.text_area("Description",item["description"])
                             ep=st.number_input("Price (₦)",min_value=0,value=int(item["price"]),step=100)
                             ei=st.text_input("Food image URL (optional)",item["image_url"])
@@ -743,7 +837,11 @@ elif page == "Admin":
         with tab_add:
             with st.form("add_item",clear_on_submit=True):
                 name=st.text_input("Food / drink name")
-                category=st.selectbox("Category",["Soups","Rice","Snacks","Drinks","Sides","Meat","Yam"])
+                available_categories = get_categories()
+                if not available_categories:
+                    st.warning("Create a menu category in the Manage categories section before adding menu items.")
+                    available_categories = ["Uncategorised"]
+                category=st.selectbox("Category",available_categories)
                 description=st.text_area("Description")
                 price=st.number_input("Price (₦)",min_value=0,value=1000,step=100)
                 image_url=st.text_input("Food image URL (optional)")
