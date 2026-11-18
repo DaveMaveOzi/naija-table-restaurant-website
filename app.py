@@ -55,9 +55,6 @@ def init_db():
     )""")
     cur.execute("INSERT OR IGNORE INTO restaurant_settings(setting_key, setting_value) VALUES('opening_time','10:00')")
     cur.execute("INSERT OR IGNORE INTO restaurant_settings(setting_key, setting_value) VALUES('closing_time','22:00')")
-    cur.execute("INSERT OR IGNORE INTO restaurant_settings(setting_key, setting_value) VALUES('restaurant_address','Restaurant address to be added')")
-    cur.execute("INSERT OR IGNORE INTO restaurant_settings(setting_key, setting_value) VALUES('restaurant_phone','Phone number to be added')")
-    cur.execute("INSERT OR IGNORE INTO restaurant_settings(setting_key, setting_value) VALUES('restaurant_email','Email address to be added')")
     # Safe migration for databases created by earlier project versions.
     order_columns = {row[1] for row in cur.execute("PRAGMA table_info(orders)").fetchall()}
     if "customer_lat" not in order_columns:
@@ -170,21 +167,6 @@ def get_restaurant_hours():
     values = {row["setting_key"]: row["setting_value"] for row in rows}
     return values.get("opening_time", "10:00"), values.get("closing_time", "22:00")
 
-def get_restaurant_contact():
-    conn = db()
-    rows = conn.execute(
-        "SELECT setting_key, setting_value FROM restaurant_settings "
-        "WHERE setting_key IN ('restaurant_address','restaurant_phone','restaurant_email')"
-    ).fetchall()
-    conn.close()
-    values = {row["setting_key"]: row["setting_value"] for row in rows}
-    return (
-        values.get("restaurant_address", "Restaurant address to be added"),
-        values.get("restaurant_phone", "Phone number to be added"),
-        values.get("restaurant_email", "Email address to be added"),
-    )
-
-
 def format_clock(value):
     try:
         parsed = datetime.strptime(value, "%H:%M")
@@ -217,26 +199,6 @@ def set_theme_css(theme):
     :root {{ color-scheme: {'dark' if dark else 'light'}; }}
     html, body, [data-testid="stAppViewContainer"], [data-testid="stMarkdownContainer"],
     button, input, textarea, select, label, p, span, div {{ font-family:'Poppins',sans-serif !important; }}
-    /* Keep Streamlit's icon glyphs on their icon font; Poppins must only style text. */
-    [data-testid="stIconMaterial"],
-    [data-testid="stIconMaterial"] *,
-    .material-icons,
-    .material-icons-round,
-    .material-symbols,
-    .material-symbols-rounded,
-    button [data-testid="stIconMaterial"],
-    [data-testid="stExpander"] summary [data-testid="stIconMaterial"],
-    [data-testid="stTextInput"] button span {{
-        font-family:'Material Symbols Rounded','Material Icons',sans-serif !important;
-        font-feature-settings:'liga' !important;
-        -webkit-font-feature-settings:'liga' !important;
-        font-weight:normal !important;
-        font-style:normal !important;
-        letter-spacing:normal !important;
-        text-transform:none !important;
-        white-space:nowrap !important;
-    }}
-
     [data-testid="stAppViewContainer"], [data-testid="stMain"] {{ background:{bg} !important; color:{text} !important; }}
     [data-testid="stHeader"] {{ background:{bg} !important; }}
     [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display:none !important; width:0 !important; }}
@@ -277,11 +239,15 @@ def set_theme_css(theme):
     div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input, div[data-testid="stTextArea"] textarea, div[data-testid="stSelectbox"] > div {{ border-radius:4px; }}
     div[data-testid="stNumberInput"] {{ max-width:112px; }}
     [data-testid="stMetric"] {{ background:{panel}; padding:12px; border:1px solid {border}; border-radius:5px; }}
-    .footer {{ text-align:center; color:{muted}; padding:30px 0 8px; font-size:.7rem; letter-spacing:.5px; }}
+    .footer {{ text-align:center; color:{muted}; padding:30px 0 12px; font-size:.7rem; letter-spacing:.5px; }}
+    .footer-tagline {{ color:{text}; font-size:.72rem; font-weight:600; letter-spacing:1.1px; margin-bottom:7px; }}
+    .footer-copyright {{ color:{muted}; font-size:.68rem; margin-bottom:14px; }}
+    .footer-admin-link {{ display:inline-block; color:{'#e5c29b' if dark else '#52633d'} !important; font-size:.66rem; font-weight:600; letter-spacing:1.4px; text-decoration:none !important; border:1px solid {border}; border-radius:3px; padding:7px 13px; transition:background .2s ease,border-color .2s ease; }}
+    .footer-admin-link:hover {{ background:{panel}; border-color:#a96b3c; color:{text} !important; }}
     /* HEADER LAYOUT: separate desktop and phone structures avoid overlap. */
     .st-key-desktop_header {{
       display:block !important; width:100% !important; margin:0 0 10px !important;
-      padding:34px 0 10px !important; position:relative !important; z-index:5 !important;
+      padding:16px 0 10px !important; position:relative !important; z-index:5 !important;
     }}
     .st-key-desktop_header [data-testid="stHorizontalBlock"] {{
       display:flex !important; flex-wrap:nowrap !important; align-items:center !important;
@@ -321,13 +287,12 @@ def set_theme_css(theme):
       }}
       .st-key-mobile_controls {{ display:block !important; width:100% !important; margin:0 0 12px !important; }}
       .st-key-mobile_controls [data-testid="stHorizontalBlock"] {{
-        display:flex !important; flex-direction:row !important; flex-wrap:nowrap !important;
-        align-items:center !important; justify-content:flex-start !important;
-        gap:4px !important; width:max-content !important; max-width:100% !important;
+        display:flex !important; flex-wrap:nowrap !important; align-items:center !important;
+        justify-content:flex-start !important; gap:9px !important; width:100% !important;
       }}
       .st-key-mobile_controls [data-testid="column"] {{
         flex:0 0 42px !important; width:42px !important; min-width:42px !important;
-        max-width:42px !important; padding:0 !important; margin:0 !important;
+        max-width:42px !important; padding:0 !important;
       }}
       .st-key-mobile_controls button {{
         display:flex !important; visibility:visible !important; opacity:1 !important;
@@ -506,7 +471,7 @@ with st.container(key="mobile_header"):
     with st.container(key="mobile_brand"):
         st.markdown('<div class="brand">NAIJA <span>TABLE</span></div><div class="brand-sub">NIGERIAN KITCHEN & GRILL</div>', unsafe_allow_html=True)
     with st.container(key="mobile_controls"):
-        mobile_menu_col, mobile_theme_col = st.columns([1, 1], gap=0, vertical_alignment="center")
+        mobile_menu_col, mobile_theme_col = st.columns([1, 1], gap="small", vertical_alignment="center")
         with mobile_menu_col:
             with st.container(key="mobile_menu"):
                 menu_icon = "×" if st.session_state.mobile_menu_open else "☰"
@@ -676,14 +641,13 @@ elif page == "Contact":
     st.title("Contact the kitchen")
     st.write("Questions, orders or a special request? We would be glad to hear from you.")
     opening_time, closing_time = get_restaurant_hours()
-    restaurant_address, restaurant_phone, restaurant_email = get_restaurant_contact()
     opening_label = format_clock(opening_time)
     closing_label = format_clock(closing_time)
     st.markdown(f'''<div class="info-panel">
       <h3>Naija Table</h3>
-      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">location_on</span></span><div><strong>Visit us</strong><small>{restaurant_address}</small></div></div>
-      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">call</span></span><div><strong>Call us</strong><small>{restaurant_phone}</small></div></div>
-      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">mail</span></span><div><strong>Email us</strong><small>{restaurant_email}</small></div></div>
+      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">location_on</span></span><div><strong>Visit us</strong><small>Restaurant address to be added</small></div></div>
+      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">call</span></span><div><strong>Call us</strong><small>Phone number to be added</small></div></div>
+      <div class="contact-row"><span class="contact-icon"><span class="material-symbols-rounded">mail</span></span><div><strong>Email us</strong><small>Email address to be added</small></div></div>
       <div class="contact-row" style="border-bottom:0"><span class="contact-icon"><span class="material-symbols-rounded">schedule</span></span><div><strong>Opening hours</strong><small>{opening_label} – {closing_label}, daily</small></div></div>
     </div>''', unsafe_allow_html=True)
 
@@ -745,7 +709,7 @@ elif page == "Admin":
         top3.metric("Orders",len(orders))
         if st.button("Sign out"):
             st.session_state.admin=False; st.rerun()
-        tab_menu,tab_add,tab_orders,tab_contact,tab_settings=st.tabs(["Manage menu","Add menu item","Orders","Contact details","Restaurant settings"])
+        tab_menu,tab_add,tab_orders,tab_settings=st.tabs(["Manage menu","Add menu item","Orders","Restaurant settings"])
         with tab_menu:
             st.markdown("#### Menu inventory")
             for item in menu_all:
@@ -822,38 +786,6 @@ elif page == "Admin":
                                          (order["id"], float(driver_lat), float(driver_lon), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                             conn.commit(); conn.close()
                             st.success("Driver location saved."); st.rerun()
-        with tab_contact:
-            st.markdown("#### Public contact page")
-            st.caption("These details appear on the customer-facing Contact page.")
-            current_address, current_phone, current_email = get_restaurant_contact()
-            with st.form("restaurant_contact_form"):
-                edited_address = st.text_area("Restaurant location / address", value=current_address, height=90)
-                edited_phone = st.text_input("Phone number", value=current_phone)
-                edited_email = st.text_input("Email address", value=current_email)
-                save_contact = st.form_submit_button("Save contact details")
-            if save_contact:
-                if not edited_address.strip() or not edited_phone.strip() or not edited_email.strip():
-                    st.error("Please complete the location, phone number and email address.")
-                elif "@" not in edited_email or "." not in edited_email.rsplit("@", 1)[-1]:
-                    st.error("Enter a valid email address.")
-                else:
-                    conn = db()
-                    contact_values = {
-                        "restaurant_address": edited_address.strip(),
-                        "restaurant_phone": edited_phone.strip(),
-                        "restaurant_email": edited_email.strip(),
-                    }
-                    for setting_key, setting_value in contact_values.items():
-                        conn.execute(
-                            "INSERT INTO restaurant_settings(setting_key,setting_value) VALUES(?,?) "
-                            "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
-                            (setting_key, setting_value),
-                        )
-                    conn.commit()
-                    conn.close()
-                    st.success("Contact page details updated.")
-                    st.rerun()
-
         with tab_settings:
             st.markdown("#### Restaurant opening hours")
             current_open, current_close = get_restaurant_hours()
@@ -891,4 +823,10 @@ elif page == "Admin":
                     save_admin_password(account["username"], changed_password)
                     st.success("Your admin password has been updated.")
 
-st.markdown('<div class="footer">NAIJA TABLE · GOOD FOOD, GOOD COMPANY<br>© 2026 Naija Table.</div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="footer">
+  <div class="footer-tagline">NAIJA TABLE · GOOD FOOD, GOOD COMPANY</div>
+  <div class="footer-copyright">© 2026 Naija Table.</div>
+  <a class="footer-admin-link" href="?admin=1" target="_self">ADMIN LOGIN</a>
+</div>
+""", unsafe_allow_html=True)
